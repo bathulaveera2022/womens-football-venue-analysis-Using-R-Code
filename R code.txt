@@ -1,0 +1,236 @@
+# ============================================================================ 
+# Women's International Football Venue Impact Analysis
+# Research Question: How does the venue influence match outcomes?
+# ============================================================================
+
+# Load required libraries
+library(tidyverse)  # For data manipulation and visualization
+library(ggplot2)    # For advanced plotting
+library(ggpubr)     # For publication-ready plots
+library(rstatix)    # For statistical tests
+library(gridExtra)  # For arranging multiple plots
+library(scales)     # For scale formatting
+library(effectsize) # For calculating effect sizes
+library(knitr)      # For creating tables
+library(corrplot)   # For correlation visualizations
+library(car)        # For Levene's test
+
+# Set theme for consistent visualization
+theme_set(theme_minimal())
+
+# ============================================================================ 
+# 1. Data Loading and Preprocessing
+# ============================================================================
+
+# Load the dataset
+df <- read.csv("H:/assisgnment/hertfordshire assignment/Bharadwas/Dataset/results.csv")
+
+# Create venue type column and other necessary transformations
+process_data <- function(data) {
+  data %>% 
+    mutate(
+      # Correcting date format to "mm/dd/yyyy"
+      date = as.Date(date, format = "%m/%d/%Y"),
+      
+      # Create venue type
+      venue_type = factor(ifelse(neutral == TRUE, "Neutral", "Home")),
+      
+      # Calculate total goals and goal difference
+      total_goals = home_score + away_score,
+      goal_difference = home_score - away_score,
+      
+      # Determine match outcome
+      match_outcome = case_when(
+        goal_difference > 0 ~ "Home Win",
+        goal_difference < 0 ~ "Away Win",
+        TRUE ~ "Draw"
+      ),
+      
+      # Convert match outcome to factor
+      match_outcome = factor(match_outcome),
+      
+      # Add year for temporal analysis
+      year = format(date, "%Y")
+    )
+}
+
+# Apply preprocessing
+processed_df <- process_data(df)
+
+# Check the first few rows of the processed data
+head(processed_df)
+
+# ============================================================================ 
+# 2. Exploratory Data Analysis
+# ============================================================================
+
+# Summary statistics function
+generate_summary_stats <- function(data) {
+  data %>% 
+    group_by(venue_type) %>% 
+    summarise(
+      n = n(),
+      mean_total_goals = mean(total_goals, na.rm = TRUE),
+      sd_total_goals = sd(total_goals, na.rm = TRUE),
+      median_total_goals = median(total_goals, na.rm = TRUE),
+      min_total_goals = min(total_goals, na.rm = TRUE),
+      max_total_goals = max(total_goals, na.rm = TRUE)
+    ) %>% 
+    kable(caption = "Summary Statistics by Venue Type")
+}
+
+# Create summary statistics
+summary_stats <- generate_summary_stats(processed_df)
+print(summary_stats)
+
+# ============================================================================ 
+# 3. Visualization Functions
+# ============================================================================
+
+# Function for creating the distribution plot
+create_distribution_plot <- function(data) {
+  ggplot(data, aes(x = total_goals)) +
+    geom_histogram(aes(y = ..density..), 
+                  binwidth = 1, 
+                  fill = "skyblue", 
+                  color = "black", 
+                  alpha = 0.7) +
+    geom_density(color = "red", size = 1) +
+    stat_function(fun = dnorm, 
+                 args = list(mean = mean(data$total_goals), 
+                            sd = sd(data$total_goals)),
+                 color = "blue", 
+                 linetype = "dashed") +
+    labs(title = "Distribution of Total Goals in Women's International Football",
+         x = "Total Goals per Match",
+         y = "Density") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5))
+}
+
+# Function for creating venue comparison plot
+create_venue_comparison <- function(data) {
+  ggplot(data, aes(x = venue_type, y = total_goals, fill = venue_type)) +
+    geom_boxplot(alpha = 0.7) +
+    geom_jitter(width = 0.2, alpha = 0.2) +
+    labs(title = "Total Goals by Venue Type",
+         x = "Venue Type",
+         y = "Total Goals Scored",
+         fill = "Venue Type") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5))
+}
+
+# Create temporal analysis plot
+create_temporal_plot <- function(data) {
+  data %>% 
+    group_by(year, venue_type) %>% 
+    summarise(mean_goals = mean(total_goals, na.rm = TRUE)) %>% 
+    ggplot(aes(x = year, y = mean_goals, color = venue_type, group = venue_type)) +
+    geom_line() +
+    geom_point() +
+    labs(title = "Average Goals per Year by Venue Type",
+         x = "Year",
+         y = "Average Total Goals",
+         color = "Venue Type") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+
+# ============================================================================ 
+# 4. Statistical Analysis Functions
+# ============================================================================
+
+# Function to check assumptions
+check_assumptions <- function(data) {
+  # Normality test for each group
+  normality_results <- data %>% 
+    group_by(venue_type) %>% 
+    summarise(
+      group_size = n(),
+      shapiro_stat = ifelse(group_size >= 3 & group_size <= 5000, 
+                            shapiro.test(total_goals)$statistic, 
+                            NA),
+      shapiro_p = ifelse(group_size >= 3 & group_size <= 5000, 
+                         shapiro.test(total_goals)$p.value, 
+                         NA)
+    )
+  
+  # Levene's test for homogeneity of variance
+  levene_test <- car::leveneTest(total_goals ~ venue_type, data = data)
+  
+  # Return results
+  list(
+    normality = normality_results,
+    variance_homogeneity = levene_test
+  )
+}
+
+# Function to perform statistical tests
+perform_statistical_tests <- function(data) {
+  # Perform both parametric and non-parametric tests
+  t_test_result <- t.test(total_goals ~ venue_type, data = data)
+  wilcox_result <- wilcox.test(total_goals ~ venue_type, data = data)
+  
+  # Calculate effect size
+  cohens_d <- cohens_d(total_goals ~ venue_type, data = data)
+  
+  # Return results
+  list(
+    t_test = t_test_result,
+    wilcox_test = wilcox_result,
+    effect_size = cohens_d
+  )
+}
+
+# ============================================================================ 
+# 5. Execute Analysis
+# ============================================================================
+
+# Generate all plots
+dist_plot <- create_distribution_plot(processed_df)
+venue_plot <- create_venue_comparison(processed_df)
+temporal_plot <- create_temporal_plot(processed_df)
+
+# Save plots
+ggsave("distribution_plot.png", dist_plot, width = 10, height = 6)
+ggsave("venue_comparison_plot.png", venue_plot, width = 10, height = 6)
+ggsave("temporal_plot.png", temporal_plot, width = 12, height = 6)
+
+# Perform statistical analysis
+assumptions <- check_assumptions(processed_df)
+statistical_tests <- perform_statistical_tests(processed_df)
+
+# ============================================================================ 
+# 6. Results Reporting
+# ============================================================================
+
+# Function to create a formatted results summary
+create_results_summary <- function(assumptions, tests) {
+  cat("Statistical Analysis Results\n")
+  cat("===========================\n\n")
+  
+  # Assumptions
+  cat("1. Assumption Tests:\n")
+  cat("   Normality Test Results:\n")
+  print(assumptions$normality)
+  cat("\n   Variance Homogeneity Test:\n")
+  print(assumptions$variance_homogeneity)
+  
+  # Statistical Tests
+  cat("\n2. Statistical Tests:\n")
+  cat("   T-test Results:\n")
+  print(tests$t_test)
+  cat("\n   Wilcoxon Test Results:\n")
+  print(tests$wilcox_test)
+  
+  # Effect Size
+  cat("\n3. Effect Size:\n")
+  print(tests$effect_size)
+}
+
+# Generate results summary
+create_results_summary(assumptions, statistical_tests)
+
+# Save workspace
+save.image("venue_analysis_workspace.RData")
